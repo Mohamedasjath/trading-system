@@ -1,1590 +1,1012 @@
-import streamlit as st
-import yfinance as yf
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║         SMART MONEY CONCEPT (SMC) ENGINE — XAUUSD (Gold/USD)               ║
+║         Institutional-Grade | Production-Ready | Confluence-Driven          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Author  : Quantitative SMC Engine
+Version : 2.0.0
+Asset   : XAUUSD (adaptable to any instrument)
+Timeframe: M5 / M15 / H1 / H4
+
+Modules:
+  1. Swing High/Low Detection
+  2. Market Structure (BOS / CHOCH)
+  3. Liquidity Detection & Sweeps
+  4. Fair Value Gap (FVG)
+  5. Order Block Detection
+  6. Premium / Discount Zones
+  7. Multi-Timeframe Bias
+  8. Confluence-Based Signal Generation
+
+"""
+
 import pandas as pd
-import plotly.graph_objects as go
-import feedparser
-from datetime import datetime
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
+import numpy as np
+import logging
+from dataclasses import dataclass, field
+from typing import Optional
 
-
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-st.set_page_config(
-    page_title="Pro Trade Analyzer",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# ─────────────────────────────────────────────
+#  LOGGING CONFIGURATION
+# ─────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
 )
-
-
-# ============================================================
-# CSS DESIGN
-# ============================================================
-st.markdown("""
-<style>
-    .stApp {
-        background: #05070d;
-        color: #e5e7eb;
-    }
-
-    header[data-testid="stHeader"] {
-        background: rgba(5, 7, 13, 0.85);
-    }
-
-    section[data-testid="stSidebar"] {
-        background: #080d18;
-        border-right: 1px solid rgba(148,163,184,0.18);
-    }
-
-    .block-container {
-        padding-top: 1rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-        max-width: 100%;
-    }
-
-    .app-hero {
-        background: linear-gradient(135deg, rgba(14,165,233,0.18), rgba(34,197,94,0.10));
-        border: 1px solid rgba(148,163,184,0.18);
-        border-radius: 22px;
-        padding: 18px 22px;
-        margin-bottom: 14px;
-        box-shadow: 0 0 42px rgba(14,165,233,0.10);
-        animation: softGlow 3s ease-in-out infinite alternate;
-    }
-
-    @keyframes softGlow {
-        from { box-shadow: 0 0 25px rgba(14,165,233,0.10); }
-        to { box-shadow: 0 0 50px rgba(34,197,94,0.16); }
-    }
-
-    .app-title {
-        font-size: 34px;
-        font-weight: 950;
-        color: #ffffff;
-        letter-spacing: -0.8px;
-        margin-bottom: 2px;
-    }
-
-    .app-subtitle {
-        color: #94a3b8;
-        font-size: 14px;
-    }
-
-    .warning-box {
-        background: rgba(250,204,21,0.08);
-        border: 1px solid rgba(250,204,21,0.22);
-        border-radius: 14px;
-        padding: 10px 14px;
-        color: #fde68a;
-        font-size: 13px;
-        margin-bottom: 14px;
-    }
-
-    .top-summary-card {
-        background: rgba(11,18,32,0.88);
-        border: 1px solid rgba(148,163,184,0.16);
-        border-radius: 18px;
-        padding: 14px 16px;
-        min-height: 92px;
-        box-shadow: 0 16px 35px rgba(0,0,0,0.30);
-        transition: 0.25s ease;
-        backdrop-filter: blur(8px);
-    }
-
-    .top-summary-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 0 28px rgba(56,189,248,0.18);
-    }
-
-    .metric-label {
-        font-size: 11px;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.9px;
-        margin-bottom: 6px;
-    }
-
-    .metric-value {
-        font-size: 24px;
-        font-weight: 900;
-        color: #ffffff;
-        line-height: 1.1;
-    }
-
-    .metric-small {
-        color: #64748b;
-        font-size: 12px;
-        margin-top: 6px;
-    }
-
-    .buy-signal {
-        background: linear-gradient(135deg, #00ff88, #22c55e, #16a34a);
-        color: #001b0c;
-        border-radius: 26px;
-        padding: 24px;
-        text-align: center;
-        font-size: 38px;
-        font-weight: 1000;
-        box-shadow: 0 0 40px rgba(34,197,94,0.48);
-        animation: pulseSignal 1.6s infinite, greenGlow 2.4s infinite alternate;
-        margin: 12px 0 14px 0;
-    }
-
-    .sell-signal {
-        background: linear-gradient(135deg, #ff1744, #ef4444, #991b1b);
-        color: #ffffff;
-        border-radius: 26px;
-        padding: 24px;
-        text-align: center;
-        font-size: 38px;
-        font-weight: 1000;
-        box-shadow: 0 0 40px rgba(239,68,68,0.48);
-        animation: pulseSignal 1.6s infinite, redGlow 2.4s infinite alternate;
-        margin: 12px 0 14px 0;
-    }
-
-    .wait-signal {
-        background: linear-gradient(135deg, #facc15, #f59e0b, #b45309);
-        color: #1f1300;
-        border-radius: 26px;
-        padding: 24px;
-        text-align: center;
-        font-size: 38px;
-        font-weight: 1000;
-        box-shadow: 0 0 40px rgba(250,204,21,0.38);
-        animation: pulseSignal 1.8s infinite, yellowGlow 2.5s infinite alternate;
-        margin: 12px 0 14px 0;
-    }
-
-    @keyframes pulseSignal {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.008); }
-        100% { transform: scale(1); }
-    }
-
-    @keyframes greenGlow {
-        from { box-shadow: 0 0 25px rgba(34,197,94,0.28); }
-        to { box-shadow: 0 0 65px rgba(34,197,94,0.65); }
-    }
-
-    @keyframes redGlow {
-        from { box-shadow: 0 0 25px rgba(239,68,68,0.28); }
-        to { box-shadow: 0 0 65px rgba(239,68,68,0.65); }
-    }
-
-    @keyframes yellowGlow {
-        from { box-shadow: 0 0 25px rgba(250,204,21,0.22); }
-        to { box-shadow: 0 0 65px rgba(250,204,21,0.55); }
-    }
-
-    .tv-wrapper {
-        background: #05070d;
-        border: 1px solid rgba(148,163,184,0.18);
-        border-radius: 18px;
-        overflow: hidden;
-        box-shadow: 0 25px 60px rgba(0,0,0,0.45);
-        margin-top: 8px;
-    }
-
-    .tv-topbar {
-        height: 46px;
-        background: #080808;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 0 12px;
-        color: #e5e7eb;
-        font-size: 13px;
-    }
-
-    .tv-symbol {
-        background: #111827;
-        border: 1px solid rgba(255,255,255,0.12);
-        padding: 7px 12px;
-        border-radius: 10px;
-        font-weight: 900;
-        color: #ffffff;
-    }
-
-    .tv-price {
-        color: #e5e7eb;
-        font-weight: 800;
-        padding: 0 8px;
-    }
-
-    .tv-pill {
-        background: transparent;
-        color: #cbd5e1;
-        padding: 5px 8px;
-        border-radius: 8px;
-        font-weight: 700;
-    }
-
-    .tv-pill-active {
-        background: #1d4ed8;
-        color: white;
-        padding: 5px 9px;
-        border-radius: 8px;
-        font-weight: 900;
-    }
-
-    .tv-left-tools {
-        background: #090909;
-        border-right: 1px solid rgba(255,255,255,0.08);
-        min-height: 720px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding-top: 12px;
-        gap: 10px;
-        border-radius: 0 0 0 18px;
-    }
-
-    .tv-tool {
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
-        background: transparent;
-        border: 1px solid transparent;
-        color: #cbd5e1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 16px;
-    }
-
-    .tv-tool:hover {
-        background: #111827;
-        border: 1px solid rgba(255,255,255,0.12);
-    }
-
-    .right-panel {
-        background: rgba(9,9,9,0.95);
-        border-left: 1px solid rgba(255,255,255,0.08);
-        min-height: 720px;
-        padding: 12px;
-        border-radius: 0 0 18px 0;
-    }
-
-    .panel-title {
-        font-size: 11px;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 10px;
-        margin-top: 6px;
-    }
-
-    .watch-card {
-        background: #111827;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 13px;
-        padding: 10px 11px;
-        margin-bottom: 9px;
-    }
-
-    .watch-label {
-        color: #94a3b8;
-        font-size: 12px;
-        margin-bottom: 4px;
-    }
-
-    .watch-value {
-        color: #ffffff;
-        font-size: 17px;
-        font-weight: 900;
-    }
-
-    .green { color: #22c55e !important; }
-    .red { color: #ef4444 !important; }
-    .yellow { color: #facc15 !important; }
-
-    .bottom-bar {
-        height: 34px;
-        background: #080808;
-        border-top: 1px solid rgba(255,255,255,0.08);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 14px;
-        color: #94a3b8;
-        font-size: 12px;
-    }
-
-    .method-card {
-        background: rgba(11,18,32,0.90);
-        border: 1px solid rgba(148,163,184,0.16);
-        border-radius: 16px;
-        padding: 14px;
-        margin-bottom: 10px;
-        backdrop-filter: blur(8px);
-    }
-
-    .reason-card {
-        background: rgba(15,23,42,0.95);
-        border-left: 4px solid #38bdf8;
-        padding: 12px 14px;
-        border-radius: 12px;
-        margin-bottom: 9px;
-        color: #dbeafe;
-        font-size: 14px;
-    }
-
-    .news-positive {
-        border-left: 4px solid #22c55e;
-        background: rgba(34,197,94,0.08);
-        padding: 12px;
-        border-radius: 12px;
-        margin-bottom: 10px;
-    }
-
-    .news-negative {
-        border-left: 4px solid #ef4444;
-        background: rgba(239,68,68,0.08);
-        padding: 12px;
-        border-radius: 12px;
-        margin-bottom: 10px;
-    }
-
-    .news-neutral {
-        border-left: 4px solid #facc15;
-        background: rgba(250,204,21,0.08);
-        padding: 12px;
-        border-radius: 12px;
-        margin-bottom: 10px;
-    }
-
-    div.stButton > button {
-        width: 100%;
-        height: 48px;
-        border-radius: 14px;
-        border: 0;
-        font-weight: 900;
-        color: #020617;
-        background: linear-gradient(90deg, #22c55e, #38bdf8);
-    }
-
-    div.stButton > button:hover {
-        transform: scale(1.01);
-        box-shadow: 0 0 30px rgba(56,189,248,0.35);
-    }
-
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        background: #0b1220;
-        border-radius: 14px;
-        padding: 10px 18px;
-        color: #e5e7eb;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ============================================================
-# ANIMATED BACKGROUND
-# ============================================================
-def inject_animated_background(signal="WAIT"):
-    if signal == "BUY":
-        main_color = "#22c55e"
-        soft_color = "rgba(34,197,94,0.18)"
-        glow_color = "rgba(34,197,94,0.45)"
-    elif signal == "SELL":
-        main_color = "#ef4444"
-        soft_color = "rgba(239,68,68,0.18)"
-        glow_color = "rgba(239,68,68,0.45)"
-    else:
-        main_color = "#facc15"
-        soft_color = "rgba(250,204,21,0.15)"
-        glow_color = "rgba(250,204,21,0.35)"
-
-    st.markdown(f"""
-    <style>
-        .stApp {{
-            background:
-                linear-gradient(120deg, rgba(5,7,13,0.96), rgba(5,7,13,0.92)),
-                repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 80px),
-                repeating-linear-gradient(0deg, rgba(255,255,255,0.022) 0px, rgba(255,255,255,0.022) 1px, transparent 1px, transparent 55px);
-            overflow-x: hidden;
-        }}
-
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            top: 0;
-            left: -40%;
-            width: 180%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 0;
-            opacity: 0.28;
-            background:
-                linear-gradient(115deg, transparent 0%, transparent 42%, {soft_color} 43%, transparent 45%),
-                linear-gradient(125deg, transparent 0%, transparent 52%, {soft_color} 53%, transparent 55%),
-                linear-gradient(135deg, transparent 0%, transparent 63%, {soft_color} 64%, transparent 66%);
-            animation: marketFlow 12s linear infinite;
-        }}
-
-        .stApp::after {{
-            content: "";
-            position: fixed;
-            width: 420px;
-            height: 420px;
-            right: -120px;
-            top: 80px;
-            background: radial-gradient(circle, {glow_color}, transparent 68%);
-            filter: blur(18px);
-            pointer-events: none;
-            z-index: 0;
-            animation: glowMove 6s ease-in-out infinite alternate;
-        }}
-
-        @keyframes marketFlow {{
-            0% {{ transform: translateX(-8%) translateY(0px); }}
-            50% {{ transform: translateX(4%) translateY(-18px); }}
-            100% {{ transform: translateX(12%) translateY(0px); }}
-        }}
-
-        @keyframes glowMove {{
-            0% {{ transform: scale(1) translateY(0px); opacity: 0.45; }}
-            100% {{ transform: scale(1.18) translateY(50px); opacity: 0.85; }}
-        }}
-
-        .block-container {{
-            position: relative;
-            z-index: 2;
-        }}
-
-        .animated-market-strip {{
-            width: 100%;
-            height: 46px;
-            border-radius: 18px;
-            overflow: hidden;
-            margin-bottom: 14px;
-            background: rgba(15,23,42,0.72);
-            border: 1px solid rgba(148,163,184,0.18);
-            position: relative;
-        }}
-
-        .animated-market-strip::before {{
-            content: "";
-            position: absolute;
-            left: -20%;
-            top: 50%;
-            width: 140%;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, {main_color}, transparent);
-            animation: signalLine 3.2s linear infinite;
-            box-shadow: 0 0 18px {main_color};
-        }}
-
-        .animated-market-strip::after {{
-            content: "▁ ▂ ▃ ▅ ▆ ▇ ▆ ▅ ▃ ▂ ▁  ▂ ▄ ▆ ▇ ▅ ▃ ▂ ▁  ▃ ▅ ▇ ▆ ▄ ▂";
-            position: absolute;
-            top: 9px;
-            left: -50%;
-            font-size: 22px;
-            letter-spacing: 10px;
-            white-space: nowrap;
-            color: {main_color};
-            opacity: 0.55;
-            animation: candleMove 13s linear infinite;
-        }}
-
-        @keyframes signalLine {{
-            0% {{ transform: translateX(-30%); }}
-            100% {{ transform: translateX(100%); }}
-        }}
-
-        @keyframes candleMove {{
-            0% {{ transform: translateX(0); }}
-            100% {{ transform: translateX(55%); }}
-        }}
-
-        .top-summary-card:hover {{
-            border-color: {main_color};
-            box-shadow: 0 0 28px {soft_color};
-        }}
-    </style>
-
-    <div class="animated-market-strip"></div>
-    """, unsafe_allow_html=True)
-
-
-# ============================================================
-# HEADER
-# ============================================================
-st.markdown("""
-<div class="app-hero">
-    <div class="app-title">⚡ Pro Trade Analyzer</div>
-    <div class="app-subtitle">
-        Crypto, Forex and Gold technical + news sentiment trading dashboard.
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="warning-box">
-⚠️ This tool gives rule-based analysis only. It cannot guarantee profit or 100% accurate predictions.
-Always use stop loss and proper risk management.
-</div>
-""", unsafe_allow_html=True)
-
-
-# ============================================================
-# MARKETS
-# ============================================================
-TARGETS = {
-    # Crypto
-    "BTC-USD": {"symbols": ["BTC-USD"], "type": "crypto", "display": "BTC-USD"},
-    "ETH-USD": {"symbols": ["ETH-USD"], "type": "crypto", "display": "ETH-USD"},
-    "BNB-USD": {"symbols": ["BNB-USD"], "type": "crypto", "display": "BNB-USD"},
-    "SOL-USD": {"symbols": ["SOL-USD"], "type": "crypto", "display": "SOL-USD"},
-    "XRP-USD": {"symbols": ["XRP-USD"], "type": "crypto", "display": "XRP-USD"},
-    "ADA-USD": {"symbols": ["ADA-USD"], "type": "crypto", "display": "ADA-USD"},
-    "DOGE-USD": {"symbols": ["DOGE-USD"], "type": "crypto", "display": "DOGE-USD"},
-    "AVAX-USD": {"symbols": ["AVAX-USD"], "type": "crypto", "display": "AVAX-USD"},
-    "LINK-USD": {"symbols": ["LINK-USD"], "type": "crypto", "display": "LINK-USD"},
-    "LTC-USD": {"symbols": ["LTC-USD"], "type": "crypto", "display": "LTC-USD"},
-
-    # Gold
-    "XAUUSD / GOLD": {"symbols": ["XAUUSD=X", "GC=F"], "type": "gold", "display": "XAUUSD"},
-
-    # Forex majors and crosses
-    "EURUSD": {"symbols": ["EURUSD=X"], "type": "forex", "display": "EURUSD"},
-    "GBPUSD": {"symbols": ["GBPUSD=X"], "type": "forex", "display": "GBPUSD"},
-    "USDJPY": {"symbols": ["USDJPY=X"], "type": "forex_jpy", "display": "USDJPY"},
-    "USDCHF": {"symbols": ["USDCHF=X"], "type": "forex", "display": "USDCHF"},
-    "USDCAD": {"symbols": ["USDCAD=X"], "type": "forex", "display": "USDCAD"},
-    "AUDUSD": {"symbols": ["AUDUSD=X"], "type": "forex", "display": "AUDUSD"},
-    "NZDUSD": {"symbols": ["NZDUSD=X"], "type": "forex", "display": "NZDUSD"},
-    "EURJPY": {"symbols": ["EURJPY=X"], "type": "forex_jpy", "display": "EURJPY"},
-    "GBPJPY": {"symbols": ["GBPJPY=X"], "type": "forex_jpy", "display": "GBPJPY"},
-    "AUDJPY": {"symbols": ["AUDJPY=X"], "type": "forex_jpy", "display": "AUDJPY"},
-    "CADJPY": {"symbols": ["CADJPY=X"], "type": "forex_jpy", "display": "CADJPY"},
-    "CHFJPY": {"symbols": ["CHFJPY=X"], "type": "forex_jpy", "display": "CHFJPY"},
-    "EURGBP": {"symbols": ["EURGBP=X"], "type": "forex", "display": "EURGBP"},
-    "EURAUD": {"symbols": ["EURAUD=X"], "type": "forex", "display": "EURAUD"},
-    "EURCAD": {"symbols": ["EURCAD=X"], "type": "forex", "display": "EURCAD"},
-    "EURCHF": {"symbols": ["EURCHF=X"], "type": "forex", "display": "EURCHF"},
-    "GBPAUD": {"symbols": ["GBPAUD=X"], "type": "forex", "display": "GBPAUD"},
-    "GBPCAD": {"symbols": ["GBPCAD=X"], "type": "forex", "display": "GBPCAD"},
-    "GBPCHF": {"symbols": ["GBPCHF=X"], "type": "forex", "display": "GBPCHF"},
-    "AUDCAD": {"symbols": ["AUDCAD=X"], "type": "forex", "display": "AUDCAD"},
-    "AUDCHF": {"symbols": ["AUDCHF=X"], "type": "forex", "display": "AUDCHF"},
-    "NZDJPY": {"symbols": ["NZDJPY=X"], "type": "forex_jpy", "display": "NZDJPY"},
-    "NZDCAD": {"symbols": ["NZDCAD=X"], "type": "forex", "display": "NZDCAD"},
-}
-
-
-# ============================================================
-# SIDEBAR SETTINGS
-# ============================================================
-st.sidebar.markdown("## ⚙️ Settings")
-
-selected_market = st.sidebar.selectbox("Target Market", list(TARGETS.keys()))
-
-timeframe = st.sidebar.selectbox(
-    "Timeframe",
-    ["5m", "15m", "30m", "1h", "4h", "1d"],
-    index=3
-)
-
-period_map = {
-    "5m": "5d",
-    "15m": "1mo",
-    "30m": "1mo",
-    "1h": "3mo",
-    "4h": "6mo",
-    "1d": "1y"
-}
-period = period_map[timeframe]
-
-account_balance = st.sidebar.number_input(
-    "Account Balance $",
-    min_value=10.0,
-    max_value=1000000.0,
-    value=1000.0,
-    step=50.0
-)
-
-risk_percent = st.sidebar.slider(
-    "Risk per trade %",
-    min_value=0.5,
-    max_value=50.0,
-    value=1.0,
-    step=0.5
-)
-
-max_leverage = st.sidebar.selectbox(
-    "Broker Leverage",
-    [10, 20, 30, 50, 100, 200, 500, 1000],
-    index=3
-)
-
-methodology_text = st.sidebar.text_area(
-    "Trading Methodology Feed",
-    value=(
-        "Follow trend with EMA 20/50/200. Confirm momentum with RSI and MACD. "
-        "Avoid trades near strong resistance unless breakout confirms. "
-        "Use ATR for stop loss and take profit. "
-        "If news is strongly against the signal, wait."
-    ),
-    height=140
-)
-
-risk_dollar = account_balance * (risk_percent / 100)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 💵 Risk Summary")
-st.sidebar.write(f"Account Balance: **${account_balance:,.2f}**")
-st.sidebar.write(f"Risk Amount: **${risk_dollar:,.2f}**")
-st.sidebar.write(f"Broker Leverage: **1:{max_leverage}**")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Strategy Rules")
-st.sidebar.markdown("""
-- EMA 20 / 50 / 200 trend
-- RSI momentum
-- MACD confirmation
-- Bollinger band position
-- ATR volatility
-- Support & resistance
-- Market news sentiment
-- Risk $ + lot size + leverage check
-""")
-
-analyze = st.sidebar.button("🚀 Analyze Now")
-
-
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-def safe_number(value, decimals=4):
-    try:
-        if value is None:
-            return "N/A"
-        return f"{float(value):.{decimals}f}"
-    except Exception:
-        return "N/A"
-
-
-def download_market_data(symbol_list, period_value, interval_value):
-    last_error = None
-
-    for symbol in symbol_list:
-        try:
-            data = yf.download(
-                symbol,
-                period=period_value,
-                interval=interval_value,
-                progress=False,
-                auto_adjust=False
-            )
-
-            if data is not None and not data.empty:
-                if isinstance(data.columns, pd.MultiIndex):
-                    data.columns = data.columns.get_level_values(0)
-
-                data = data.dropna()
-
-                if len(data) > 220:
-                    return symbol, data
-
-        except Exception as e:
-            last_error = e
-
-    raise Exception(f"Market data not available. Last error: {last_error}")
-
-
-def add_indicators(data):
-    data = data.copy()
-
-    data["EMA_20"] = EMAIndicator(close=data["Close"], window=20).ema_indicator()
-    data["EMA_50"] = EMAIndicator(close=data["Close"], window=50).ema_indicator()
-    data["EMA_200"] = EMAIndicator(close=data["Close"], window=200).ema_indicator()
-
-    data["RSI"] = RSIIndicator(close=data["Close"], window=14).rsi()
-
-    macd = MACD(close=data["Close"])
-    data["MACD"] = macd.macd()
-    data["MACD_SIGNAL"] = macd.macd_signal()
-    data["MACD_HIST"] = macd.macd_diff()
-
-    bb = BollingerBands(close=data["Close"], window=20, window_dev=2)
-    data["BB_HIGH"] = bb.bollinger_hband()
-    data["BB_LOW"] = bb.bollinger_lband()
-    data["BB_MID"] = bb.bollinger_mavg()
-
-    atr = AverageTrueRange(
-        high=data["High"],
-        low=data["Low"],
-        close=data["Close"],
-        window=14
-    )
-    data["ATR"] = atr.average_true_range()
-
-    data = data.dropna()
-    return data
-
-
-def fetch_news(market_name):
-    if "USD" in market_name and "-" in market_name:
-        base = market_name.replace("-USD", "")
-        queries = [
-            f"{base} crypto price market news today",
-            f"{base} crypto technical analysis",
-            "crypto market Federal Reserve interest rates",
-            "Bitcoin Ethereum crypto market sentiment"
-        ]
-    elif market_name == "XAUUSD / GOLD":
-        queries = [
-            "gold price XAUUSD market today",
-            "gold price US dollar yields Federal Reserve",
-            "XAUUSD technical analysis market news",
-            "gold inflation safe haven geopolitical news",
-            "gold price interest rates market"
-        ]
-    else:
-        queries = [
-            f"{market_name} forex market news today",
-            f"{market_name} technical analysis forex",
-            "US dollar Federal Reserve forex market",
-            "forex market interest rates inflation news"
-        ]
-
-    all_news = []
-
-    for query in queries:
-        url = (
-            "https://news.google.com/rss/search?q="
-            + query.replace(" ", "%20")
-            + "&hl=en-US&gl=US&ceid=US:en"
-        )
-
-        feed = feedparser.parse(url)
-
-        for entry in feed.entries[:10]:
-            title = entry.get("title", "")
-            link = entry.get("link", "")
-            published = entry.get("published", "")
-
-            if title:
-                all_news.append({
-                    "title": title,
-                    "link": link,
-                    "published": published
-                })
-
-    unique_news = []
-    seen_titles = set()
-
-    for item in all_news:
-        key = item["title"].lower().strip()
-
-        if key not in seen_titles:
-            seen_titles.add(key)
-            unique_news.append(item)
-
-    return unique_news[:25]
-
-
-def analyze_news_sentiment(news_items, market_name):
-    common_bullish = [
-        "rally", "surge", "bullish", "breakout", "record high",
-        "rate cut", "risk-on", "rebound", "gains", "soars",
-        "jumps", "strong demand", "optimism", "weaker dollar",
-        "inflation", "safe haven", "demand"
-    ]
-
-    common_bearish = [
-        "crash", "drop", "selloff", "bearish", "rate hike",
-        "risk-off", "falls", "plunge", "decline", "weakness",
-        "fear", "strong dollar", "hawkish", "pressure",
-        "liquidation", "outflows", "lawsuit"
-    ]
-
-    if "USD" in market_name and "-" in market_name:
-        bullish_words = common_bullish + ["etf inflows", "institutional", "adoption", "accumulation"]
-        bearish_words = common_bearish + ["regulation", "hack", "fraud", "ban"]
-    elif market_name == "XAUUSD / GOLD":
-        bullish_words = common_bullish + [
-            "geopolitical", "central bank buying", "gold rises",
-            "recession", "uncertainty", "war", "crisis", "yields fall"
-        ]
-        bearish_words = common_bearish + [
-            "dollar strong", "yields rise", "gold falls", "inflation cools",
-            "strong jobs", "profit taking"
-        ]
-    else:
-        bullish_words = common_bullish + ["currency gains", "forex gains", "economic strength", "positive data"]
-        bearish_words = common_bearish + ["currency falls", "forex losses", "economic slowdown", "negative data"]
-
-    total_score = 0
-    analyzed_news = []
-
-    for item in news_items:
-        title_lower = item["title"].lower()
-        item_score = 0
-
-        for word in bullish_words:
-            if word in title_lower:
-                item_score += 1
-
-        for word in bearish_words:
-            if word in title_lower:
-                item_score -= 1
-
-        total_score += item_score
-
-        if item_score > 0:
-            sentiment = "positive"
-        elif item_score < 0:
-            sentiment = "negative"
+logger = logging.getLogger("SMC_Engine")
+
+
+# ─────────────────────────────────────────────
+#  DATA CLASSES  (structured zone containers)
+# ─────────────────────────────────────────────
+
+@dataclass
+class FVGZone:
+    index: int          # candle index where FVG was confirmed
+    top: float          # upper boundary of the gap
+    bottom: float       # lower boundary of the gap
+    direction: str      # "bullish" | "bearish"
+    filled: bool = False
+
+
+@dataclass
+class OrderBlock:
+    index: int
+    top: float
+    bottom: float
+    direction: str      # "bullish" | "bearish"
+    mitigated: bool = False
+
+
+@dataclass
+class StructurePoint:
+    index: int
+    price: float
+    kind: str           # "HH" | "LH" | "HL" | "LL"
+
+
+@dataclass
+class LiquiditySweep:
+    index: int
+    price: float
+    kind: str           # "buy_side" | "sell_side"
+
+
+@dataclass
+class SMCResult:
+    """Full SMC analysis result for one timeframe."""
+    swing_highs: list = field(default_factory=list)
+    swing_lows: list  = field(default_factory=list)
+    structure: list   = field(default_factory=list)   # List[StructurePoint]
+    bos_bullish: list = field(default_factory=list)   # indices
+    bos_bearish: list = field(default_factory=list)
+    choch_bullish: list = field(default_factory=list)
+    choch_bearish: list = field(default_factory=list)
+    liquidity_sweeps: list = field(default_factory=list)  # List[LiquiditySweep]
+    fvg_zones: list   = field(default_factory=list)   # List[FVGZone]
+    order_blocks: list= field(default_factory=list)   # List[OrderBlock]
+    premium_zone: tuple = (0.0, 0.0)  # (eq, swing_high)
+    discount_zone: tuple = (0.0, 0.0) # (swing_low, eq)
+    equilibrium: float = 0.0
+    current_bias: str  = "NEUTRAL"    # "BULLISH" | "BEARISH" | "NEUTRAL"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 1 — SWING HIGH / LOW DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def detect_swing_points(df: pd.DataFrame, lookback: int = 5) -> tuple[list, list]:
+    """
+    Identify swing highs and lows using a rolling lookback window.
+
+    A swing high at index i means df['high'][i] is the highest point
+    in the window [i-lookback : i+lookback].
+    Same logic inverted for swing lows.
+
+    Returns:
+        swing_highs: list of (index, price)
+        swing_lows:  list of (index, price)
+    """
+    highs = df["high"].values
+    lows  = df["low"].values
+    n     = len(df)
+
+    swing_highs, swing_lows = [], []
+
+    for i in range(lookback, n - lookback):
+        window_h = highs[i - lookback : i + lookback + 1]
+        window_l = lows [i - lookback : i + lookback + 1]
+
+        if highs[i] == np.max(window_h):
+            swing_highs.append((i, highs[i]))
+
+        if lows[i] == np.min(window_l):
+            swing_lows.append((i, lows[i]))
+
+    logger.info(f"Swings detected — Highs: {len(swing_highs)}, Lows: {len(swing_lows)}")
+    return swing_highs, swing_lows
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 2 — MARKET STRUCTURE (BOS / CHOCH)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def detect_market_structure(
+    df: pd.DataFrame,
+    swing_highs: list,
+    swing_lows: list,
+) -> tuple[list, list, list, list, list]:
+    """
+    Classify swings into HH/LH/HL/LL and detect BOS + CHOCH.
+
+    BOS  (Break of Structure): continuation signal
+        Bullish BOS → close breaks above previous swing high (HH in uptrend)
+        Bearish BOS → close breaks below previous swing low  (LL in downtrend)
+
+    CHOCH (Change of Character): reversal signal
+        Bullish CHOCH → price breaks a previous swing HIGH in a downtrend
+        Bearish CHOCH → price breaks a previous swing LOW  in an uptrend
+
+    Returns:
+        structure_points, bos_bullish_idx, bos_bearish_idx,
+        choch_bullish_idx, choch_bearish_idx
+    """
+    closes = df["close"].values
+    structure_points: list[StructurePoint] = []
+    bos_bullish, bos_bearish = [], []
+    choch_bullish, choch_bearish = [], []
+
+    # ── Tag swing highs as HH or LH ──────────────────────────────────────────
+    prev_sh_price = None
+    for idx, price in swing_highs:
+        if prev_sh_price is None:
+            kind = "HH"
         else:
-            sentiment = "neutral"
+            kind = "HH" if price > prev_sh_price else "LH"
+        structure_points.append(StructurePoint(idx, price, kind))
+        prev_sh_price = price
 
-        analyzed_news.append({
-            **item,
-            "score": item_score,
-            "sentiment": sentiment
-        })
+    # ── Tag swing lows as HL or LL ────────────────────────────────────────────
+    prev_sl_price = None
+    for idx, price in swing_lows:
+        if prev_sl_price is None:
+            kind = "HL"
+        else:
+            kind = "HL" if price > prev_sl_price else "LL"
+        structure_points.append(StructurePoint(idx, price, kind))
+        prev_sl_price = price
 
-    return total_score, analyzed_news
+    structure_points.sort(key=lambda x: x.index)
+
+    # ── BOS / CHOCH detection ─────────────────────────────────────────────────
+    # Scan each candle: did close break a prior swing?
+    sh_prices = [(idx, p) for idx, p in swing_highs]
+    sl_prices = [(idx, p) for idx, p in swing_lows]
+
+    # Determine trend at each swing to classify BOS vs CHOCH
+    # Simple rule: if sequence is HH → bullish trend, LH → transitioning, etc.
+    def _get_trend_at(idx: int) -> str:
+        """Rough trend label at index idx based on recent structure points."""
+        recent = [s for s in structure_points if s.index <= idx][-6:]
+        hh = sum(1 for s in recent if s.kind == "HH")
+        ll = sum(1 for s in recent if s.kind == "LL")
+        return "BULLISH" if hh > ll else "BEARISH" if ll > hh else "NEUTRAL"
+
+    for i in range(1, len(closes)):
+        close = closes[i]
+
+        # Check breaks of prior swing highs
+        for sh_idx, sh_price in sh_prices:
+            if sh_idx < i and close > sh_price:
+                trend = _get_trend_at(sh_idx)
+                if trend == "BULLISH":
+                    bos_bullish.append(i)
+                else:
+                    # Breaking high in downtrend = CHOCH (reversal)
+                    choch_bullish.append(i)
+                break  # only tag once per candle
+
+        # Check breaks of prior swing lows
+        for sl_idx, sl_price in sl_prices:
+            if sl_idx < i and close < sl_price:
+                trend = _get_trend_at(sl_idx)
+                if trend == "BEARISH":
+                    bos_bearish.append(i)
+                else:
+                    # Breaking low in uptrend = CHOCH (reversal)
+                    choch_bearish.append(i)
+                break
+
+    # Deduplicate
+    bos_bullish   = sorted(set(bos_bullish))
+    bos_bearish   = sorted(set(bos_bearish))
+    choch_bullish = sorted(set(choch_bullish))
+    choch_bearish = sorted(set(choch_bearish))
+
+    logger.info(
+        f"Structure — BOS Bull: {len(bos_bullish)}, BOS Bear: {len(bos_bearish)}, "
+        f"CHOCH Bull: {len(choch_bullish)}, CHOCH Bear: {len(choch_bearish)}"
+    )
+    return structure_points, bos_bullish, bos_bearish, choch_bullish, choch_bearish
 
 
-def methodology_score(methodology_text_value):
-    text = methodology_text_value.lower()
-    score = 0
-    notes = []
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 3 — LIQUIDITY DETECTION & SWEEPS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    if "trend" in text or "ema" in text:
-        notes.append("Methodology includes trend/EMA confirmation.")
-    if "rsi" in text:
-        notes.append("Methodology includes RSI momentum confirmation.")
-    if "macd" in text:
-        notes.append("Methodology includes MACD confirmation.")
-    if "news" in text:
-        notes.append("Methodology includes news confirmation.")
-    if "risk" in text or "stop loss" in text or "sl" in text:
-        notes.append("Methodology includes risk/stop-loss control.")
-    if "wait" in text:
-        notes.append("Methodology includes WAIT rule when confirmation is weak.")
+def detect_liquidity(
+    df: pd.DataFrame,
+    swing_highs: list,
+    swing_lows: list,
+    equal_tolerance: float = 0.002,   # 0.2 % tolerance for "equal" levels
+) -> list:
+    """
+    Identify liquidity sweeps (stop hunts).
 
-    if "only buy" in text:
-        score += 5
-        notes.append("Custom bias: only buy wording detected.")
-    if "only sell" in text:
-        score -= 5
-        notes.append("Custom bias: only sell wording detected.")
+    Equal Highs / Equal Lows → clusters of retail stop orders.
+    A sweep occurs when price:
+      - Wicks ABOVE a prior swing high  (buy-side liquidity grab)
+        then CLOSES BELOW it (trap → bearish continuation)
+      - Wicks BELOW a prior swing low   (sell-side liquidity grab)
+        then CLOSES ABOVE it (trap → bullish continuation)
 
-    return score, notes
+    Returns:
+        list of LiquiditySweep
+    """
+    highs  = df["high"].values
+    lows   = df["low"].values
+    closes = df["close"].values
+    sweeps: list[LiquiditySweep] = []
+
+    # ── Buy-side sweep (price takes out prior swing high then reverses) ───────
+    for sh_idx, sh_price in swing_highs:
+        for i in range(sh_idx + 1, len(df)):
+            if highs[i] > sh_price and closes[i] < sh_price:
+                sweeps.append(LiquiditySweep(i, sh_price, "buy_side"))
+                break   # one sweep per swing high
+
+    # ── Sell-side sweep (price takes out prior swing low then reverses) ───────
+    for sl_idx, sl_price in swing_lows:
+        for i in range(sl_idx + 1, len(df)):
+            if lows[i] < sl_price and closes[i] > sl_price:
+                sweeps.append(LiquiditySweep(i, sl_price, "sell_side"))
+                break
+
+    logger.info(f"Liquidity sweeps detected: {len(sweeps)}")
+    return sweeps
 
 
-def technical_engine(data):
-    latest = data.iloc[-1]
-    previous = data.iloc[-2]
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 4 — FAIR VALUE GAP (FVG)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    close = latest["Close"]
-    score = 0
-    reasons = []
+def detect_fvg(df: pd.DataFrame, min_gap_pct: float = 0.001) -> list:
+    """
+    Detect Fair Value Gaps using 3-candle imbalance logic.
 
-    if latest["EMA_20"] > latest["EMA_50"] > latest["EMA_200"] and close > latest["EMA_20"]:
-        score += 30
-        reasons.append("Strong bullish trend: EMA20 > EMA50 > EMA200 and price is above EMA20.")
-    elif latest["EMA_20"] < latest["EMA_50"] < latest["EMA_200"] and close < latest["EMA_20"]:
-        score -= 30
-        reasons.append("Strong bearish trend: EMA20 < EMA50 < EMA200 and price is below EMA20.")
-    elif close > latest["EMA_200"]:
-        score += 10
-        reasons.append("Price is above EMA200, so long-term bias is bullish.")
-    elif close < latest["EMA_200"]:
-        score -= 10
-        reasons.append("Price is below EMA200, so long-term bias is bearish.")
+    Bullish FVG:
+        candle[i].low  > candle[i-2].high   → gap between i-2 high and i low
 
-    if 50 < latest["RSI"] < 70:
-        score += 15
-        reasons.append("RSI is bullish but not overbought.")
-    elif 30 < latest["RSI"] < 50:
-        score -= 15
-        reasons.append("RSI is bearish but not oversold.")
-    elif latest["RSI"] >= 70:
-        score -= 10
-        reasons.append("RSI is overbought. Pullback risk is high.")
-    elif latest["RSI"] <= 30:
-        score += 10
-        reasons.append("RSI is oversold. Bounce/reversal possibility is present.")
+    Bearish FVG:
+        candle[i].high < candle[i-2].low    → gap between i-2 low and i high
 
-    if latest["MACD"] > latest["MACD_SIGNAL"] and latest["MACD_HIST"] > previous["MACD_HIST"]:
-        score += 20
-        reasons.append("MACD is bullish and histogram is increasing.")
-    elif latest["MACD"] < latest["MACD_SIGNAL"] and latest["MACD_HIST"] < previous["MACD_HIST"]:
-        score -= 20
-        reasons.append("MACD is bearish and histogram is decreasing.")
+    min_gap_pct: minimum gap size as fraction of close price (filters noise)
+
+    Returns:
+        list of FVGZone
+    """
+    opens  = df["open"].values
+    highs  = df["high"].values
+    lows   = df["low"].values
+    closes = df["close"].values
+    fvgs: list[FVGZone] = []
+
+    for i in range(2, len(df)):
+        ref_close = closes[i]
+
+        # Bullish FVG
+        gap_top    = lows[i]
+        gap_bottom = highs[i - 2]
+        if gap_top > gap_bottom:
+            gap_size = (gap_top - gap_bottom) / ref_close
+            if gap_size >= min_gap_pct:
+                fvgs.append(FVGZone(i, top=gap_top, bottom=gap_bottom, direction="bullish"))
+
+        # Bearish FVG
+        gap_top    = lows[i - 2]
+        gap_bottom = highs[i]
+        if gap_top < lows[i - 2] and highs[i] < lows[i - 2]:
+            gap_size = (lows[i - 2] - highs[i]) / ref_close
+            if gap_size >= min_gap_pct:
+                fvgs.append(FVGZone(i, top=lows[i - 2], bottom=highs[i], direction="bearish"))
+
+    # Mark FVGs as filled when price trades through them
+    for fvg in fvgs:
+        for j in range(fvg.index + 1, len(df)):
+            if fvg.direction == "bullish" and lows[j] <= fvg.bottom:
+                fvg.filled = True
+                break
+            if fvg.direction == "bearish" and highs[j] >= fvg.top:
+                fvg.filled = True
+                break
+
+    active = [f for f in fvgs if not f.filled]
+    logger.info(f"FVGs detected: {len(fvgs)} total, {len(active)} unfilled")
+    return fvgs
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 5 — ORDER BLOCK DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def detect_order_blocks(
+    df: pd.DataFrame,
+    body_ratio_threshold: float = 0.60,
+    lookforward: int = 3,
+) -> list:
+    """
+    Identify institutional Order Blocks.
+
+    Logic:
+      1. Find large-body candles (body ≥ body_ratio_threshold × full range)
+      2. These represent institutional accumulation / distribution
+      3. Bullish OB: last bearish candle BEFORE a strong bullish impulse move
+         (price leaves the zone rapidly upward)
+      4. Bearish OB: last bullish candle BEFORE a strong bearish impulse move
+
+    Returns:
+        list of OrderBlock
+    """
+    opens  = df["open"].values
+    highs  = df["high"].values
+    lows   = df["low"].values
+    closes = df["close"].values
+    order_blocks: list[OrderBlock] = []
+
+    for i in range(1, len(df) - lookforward):
+        candle_range = highs[i] - lows[i]
+        if candle_range == 0:
+            continue
+
+        body   = abs(closes[i] - opens[i])
+        body_r = body / candle_range
+        is_bullish_candle = closes[i] > opens[i]
+
+        if body_r < body_ratio_threshold:
+            continue   # not an institutional candle
+
+        # Measure impulse after this candle
+        future_high = np.max(highs[i + 1 : i + 1 + lookforward])
+        future_low  = np.min(lows [i + 1 : i + 1 + lookforward])
+
+        # Bullish OB → bearish candle followed by bullish impulse
+        if not is_bullish_candle:
+            impulse_up = (future_high - closes[i]) / closes[i]
+            if impulse_up > 0.001:   # 0.1 % minimum impulse
+                order_blocks.append(
+                    OrderBlock(i, top=opens[i], bottom=closes[i], direction="bullish")
+                )
+
+        # Bearish OB → bullish candle followed by bearish impulse
+        else:
+            impulse_dn = (closes[i] - future_low) / closes[i]
+            if impulse_dn > 0.001:
+                order_blocks.append(
+                    OrderBlock(i, top=closes[i], bottom=opens[i], direction="bearish")
+                )
+
+    # Mark OBs as mitigated when price re-enters the zone
+    for ob in order_blocks:
+        for j in range(ob.index + 1, len(df)):
+            if ob.direction == "bullish" and lows[j] <= ob.top:
+                ob.mitigated = True
+                break
+            if ob.direction == "bearish" and highs[j] >= ob.bottom:
+                ob.mitigated = True
+                break
+
+    active = [o for o in order_blocks if not o.mitigated]
+    logger.info(f"Order Blocks: {len(order_blocks)} total, {len(active)} unmitigated")
+    return order_blocks
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 6 — PREMIUM / DISCOUNT ZONES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calculate_premium_discount(
+    df: pd.DataFrame,
+    swing_highs: list,
+    swing_lows: list,
+    lookback_bars: int = 50,
+) -> tuple[float, float, float, tuple, tuple]:
+    """
+    Calculate the Premium / Discount framework based on the most recent
+    significant swing high and swing low.
+
+    Equilibrium = 50% of [swing_low → swing_high] range
+    Premium     = above equilibrium (institutional sell zone)
+    Discount    = below equilibrium (institutional buy zone)
+
+    Returns:
+        swing_high, swing_low, equilibrium,
+        premium_zone=(eq, swing_high),
+        discount_zone=(swing_low, eq)
+    """
+    end_idx = len(df) - 1
+    start_idx = max(0, end_idx - lookback_bars)
+
+    # Filter swings within lookback window
+    recent_sh = [(i, p) for i, p in swing_highs if i >= start_idx]
+    recent_sl = [(i, p) for i, p in swing_lows  if i >= start_idx]
+
+    if not recent_sh or not recent_sl:
+        # Fallback to raw OHLC extremes
+        sw_h = df["high"].iloc[-lookback_bars:].max()
+        sw_l = df["low"] .iloc[-lookback_bars:].min()
     else:
-        reasons.append("MACD is mixed. Momentum confirmation is not strong.")
+        sw_h = max(p for _, p in recent_sh)
+        sw_l = min(p for _, p in recent_sl)
 
-    if close > latest["BB_MID"] and close < latest["BB_HIGH"]:
-        score += 10
-        reasons.append("Price is above Bollinger middle band. Buyers have control.")
-    elif close < latest["BB_MID"] and close > latest["BB_LOW"]:
-        score -= 10
-        reasons.append("Price is below Bollinger middle band. Sellers have control.")
-    elif close >= latest["BB_HIGH"]:
-        score -= 5
-        reasons.append("Price is near upper Bollinger band. Overextension risk.")
-    elif close <= latest["BB_LOW"]:
-        score += 5
-        reasons.append("Price is near lower Bollinger band. Bounce zone possible.")
+    equilibrium   = (sw_h + sw_l) / 2
+    premium_zone  = (equilibrium, sw_h)
+    discount_zone = (sw_l, equilibrium)
 
-    resistance = data["High"].tail(60).max()
-    support = data["Low"].tail(60).min()
-
-    distance_to_resistance = abs(resistance - close) / close
-    distance_to_support = abs(close - support) / close
-
-    if distance_to_resistance < 0.005:
-        score -= 8
-        reasons.append("Price is close to resistance. Breakout confirmation is needed.")
-    if distance_to_support < 0.005:
-        score += 8
-        reasons.append("Price is close to support. Reversal/bounce possibility is higher.")
-
-    return score, reasons, resistance, support
+    logger.info(
+        f"Zones — Swing High: {sw_h:.2f}, Swing Low: {sw_l:.2f}, "
+        f"EQ: {equilibrium:.2f}"
+    )
+    return sw_h, sw_l, equilibrium, premium_zone, discount_zone
 
 
-def final_decision(technical_score, raw_news_score, custom_method_score):
-    news_score = max(min(raw_news_score * 3, 20), -20)
-    method_score = max(min(custom_method_score, 10), -10)
-    total_score = technical_score + news_score + method_score
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 7 — HIGHER TIMEFRAME BIAS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    if total_score >= 45:
-        signal = "BUY"
-        confidence = min(95, 55 + total_score)
-    elif total_score <= -45:
-        signal = "SELL"
-        confidence = min(95, 55 + abs(total_score))
+def determine_htf_bias(htf_df: pd.DataFrame, lookback: int = 10) -> str:
+    """
+    Derive directional bias from a higher timeframe (H1 / H4).
+
+    Logic:
+        Compare recent close vs EMA + structure direction
+        Simple but effective for bias alignment.
+
+    Returns:
+        "BULLISH" | "BEARISH" | "NEUTRAL"
+    """
+    if htf_df is None or len(htf_df) < lookback + 2:
+        return "NEUTRAL"
+
+    closes = htf_df["close"].values[-lookback:]
+    ema    = pd.Series(htf_df["close"]).ewm(span=20).mean().values
+
+    # Trend via last EMA slope
+    ema_slope = ema[-1] - ema[-5] if len(ema) >= 5 else 0
+
+    # Higher highs / higher lows count
+    highs   = htf_df["high"].values[-lookback:]
+    lows    = htf_df["low"].values[-lookback:]
+    hh_count = sum(1 for i in range(1, len(highs)) if highs[i] > highs[i - 1])
+    ll_count = sum(1 for i in range(1, len(lows))  if lows[i]  < lows[i - 1])
+
+    if ema_slope > 0 and hh_count > ll_count:
+        bias = "BULLISH"
+    elif ema_slope < 0 and ll_count > hh_count:
+        bias = "BEARISH"
     else:
-        signal = "WAIT"
-        confidence = 50 + min(abs(total_score), 15)
+        bias = "NEUTRAL"
 
-    return signal, confidence, total_score, news_score, method_score
-
-
-def calculate_trade_levels(data, signal):
-    latest = data.iloc[-1]
-    close = latest["Close"]
-    atr = latest["ATR"]
-
-    if signal == "BUY":
-        entry = close
-        stop_loss = close - (atr * 1.5)
-        tp1 = close + (atr * 2.0)
-        tp2 = close + (atr * 3.0)
-    elif signal == "SELL":
-        entry = close
-        stop_loss = close + (atr * 1.5)
-        tp1 = close - (atr * 2.0)
-        tp2 = close - (atr * 3.0)
-    else:
-        entry = close
-        stop_loss = None
-        tp1 = None
-        tp2 = None
-
-    return entry, stop_loss, tp1, tp2
+    logger.info(f"HTF Bias: {bias} (EMA slope: {ema_slope:.4f})")
+    return bias
 
 
-def calculate_position_sizing(market_type, entry, stop_loss, tp1, tp2, account_balance, risk_percent, max_leverage):
-    risk_dollar = account_balance * (risk_percent / 100)
+# ═══════════════════════════════════════════════════════════════════════════════
+#  FULL SMC ANALYSIS — Combines All Modules
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    if stop_loss is None or tp1 is None:
+def run_smc_analysis(
+    df: pd.DataFrame,
+    htf_df: Optional[pd.DataFrame] = None,
+    swing_lookback: int = 5,
+) -> SMCResult:
+    """
+    Execute the complete SMC analysis pipeline on a DataFrame.
+
+    Args:
+        df            : Primary timeframe OHLC DataFrame
+        htf_df        : Optional higher-timeframe DataFrame for bias
+        swing_lookback: Lookback window for swing detection
+
+    Returns:
+        SMCResult with all detected zones and structure
+    """
+    if len(df) < 20:
+        logger.warning("Insufficient data for SMC analysis (need ≥ 20 bars)")
+        return SMCResult()
+
+    result = SMCResult()
+
+    # Step 1 — Swings
+    result.swing_highs, result.swing_lows = detect_swing_points(df, swing_lookback)
+
+    # Step 2 — Market Structure
+    (
+        result.structure,
+        result.bos_bullish,
+        result.bos_bearish,
+        result.choch_bullish,
+        result.choch_bearish,
+    ) = detect_market_structure(df, result.swing_highs, result.swing_lows)
+
+    # Step 3 — Liquidity
+    result.liquidity_sweeps = detect_liquidity(df, result.swing_highs, result.swing_lows)
+
+    # Step 4 — FVG
+    result.fvg_zones = detect_fvg(df)
+
+    # Step 5 — Order Blocks
+    result.order_blocks = detect_order_blocks(df)
+
+    # Step 6 — Premium / Discount
+    sw_h, sw_l, eq, prem, disc = calculate_premium_discount(
+        df, result.swing_highs, result.swing_lows
+    )
+    result.premium_zone  = prem
+    result.discount_zone = disc
+    result.equilibrium   = eq
+
+    # Step 7 — HTF Bias
+    result.current_bias = determine_htf_bias(htf_df)
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODULE 8 — CONFLUENCE-BASED SIGNAL GENERATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate_signal(
+    df: pd.DataFrame,
+    result: SMCResult,
+    atr_multiplier_sl: float = 1.5,
+    risk_reward_target: float = 3.0,
+) -> dict:
+    """
+    Generate a high-probability trade signal from SMC confluence.
+
+    BUY Confluence:
+      ✓ HTF bias is BULLISH (or NEUTRAL)
+      ✓ Bullish CHOCH present recently
+      ✓ Sell-side liquidity sweep detected recently
+      ✓ Price is in DISCOUNT zone
+      ✓ Unfilled bullish FVG exists near current price
+      ✓ Unmitigated bullish Order Block present (bonus)
+
+    SELL Confluence:
+      ✓ HTF bias is BEARISH (or NEUTRAL)
+      ✓ Bearish CHOCH or Bearish BOS present recently
+      ✓ Buy-side liquidity sweep detected recently
+      ✓ Price is in PREMIUM zone
+      ✓ Unfilled bearish FVG near current price
+      ✓ Unmitigated bearish Order Block present (bonus)
+
+    Confidence:
+        Each confluence factor adds points (see weights below).
+        Score → 0–100.
+
+    Returns:
+        dict with signal, entry, stop_loss, take_profit, risk_reward,
+              confidence, reason
+    """
+    if df.empty or len(df) < 5:
+        return _no_trade("Insufficient data")
+
+    current_close = df["close"].iloc[-1]
+    current_idx   = len(df) - 1
+
+    # How recent is "recent"? Look back N candles for signals
+    recency = min(10, len(df) // 3)
+
+    # ── ATR for dynamic SL sizing ─────────────────────────────────────────────
+    atr = _calc_atr(df, period=14)
+
+    # ── Premium / Discount check ──────────────────────────────────────────────
+    in_discount = current_close <= result.equilibrium
+    in_premium  = current_close >= result.equilibrium
+
+    # ── Recent structure events ───────────────────────────────────────────────
+    recent_choch_bull = any(i >= current_idx - recency for i in result.choch_bullish)
+    recent_choch_bear = any(i >= current_idx - recency for i in result.choch_bearish)
+    recent_bos_bear   = any(i >= current_idx - recency for i in result.bos_bearish)
+    recent_bos_bull   = any(i >= current_idx - recency for i in result.bos_bullish)
+
+    # ── Recent liquidity sweeps ───────────────────────────────────────────────
+    recent_sell_sweep = any(
+        s.kind == "sell_side" and s.index >= current_idx - recency
+        for s in result.liquidity_sweeps
+    )
+    recent_buy_sweep = any(
+        s.kind == "buy_side" and s.index >= current_idx - recency
+        for s in result.liquidity_sweeps
+    )
+
+    # ── Active FVGs near price ────────────────────────────────────────────────
+    price_tolerance = atr * 2
+    active_bull_fvg = [
+        f for f in result.fvg_zones
+        if f.direction == "bullish"
+        and not f.filled
+        and f.bottom <= current_close <= f.top + price_tolerance
+    ]
+    active_bear_fvg = [
+        f for f in result.fvg_zones
+        if f.direction == "bearish"
+        and not f.filled
+        and f.bottom - price_tolerance <= current_close <= f.top
+    ]
+
+    # ── Active OBs near price ─────────────────────────────────────────────────
+    active_bull_ob = [
+        o for o in result.order_blocks
+        if o.direction == "bullish"
+        and not o.mitigated
+        and o.bottom <= current_close <= o.top + price_tolerance
+    ]
+    active_bear_ob = [
+        o for o in result.order_blocks
+        if o.direction == "bearish"
+        and not o.mitigated
+        and o.bottom - price_tolerance <= current_close <= o.top
+    ]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  BUY SIGNAL SCORING
+    # ─────────────────────────────────────────────────────────────────────────
+    buy_score   = 0
+    buy_reasons = []
+
+    if result.current_bias in ("BULLISH", "NEUTRAL"):
+        buy_score += 15
+        buy_reasons.append(f"HTF bias: {result.current_bias}")
+
+    if recent_choch_bull:
+        buy_score += 25
+        buy_reasons.append("Bullish CHOCH detected")
+
+    if recent_sell_sweep:
+        buy_score += 20
+        buy_reasons.append("Sell-side liquidity swept")
+
+    if in_discount:
+        buy_score += 15
+        buy_reasons.append(f"Price in Discount zone (EQ: {result.equilibrium:.2f})")
+
+    if active_bull_fvg:
+        buy_score += 15
+        buy_reasons.append(f"Bullish FVG at {active_bull_fvg[0].bottom:.2f}–{active_bull_fvg[0].top:.2f}")
+
+    if active_bull_ob:
+        buy_score += 10
+        buy_reasons.append(f"Bullish OB at {active_bull_ob[0].bottom:.2f}–{active_bull_ob[0].top:.2f}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  SELL SIGNAL SCORING
+    # ─────────────────────────────────────────────────────────────────────────
+    sell_score   = 0
+    sell_reasons = []
+
+    if result.current_bias in ("BEARISH", "NEUTRAL"):
+        sell_score += 15
+        sell_reasons.append(f"HTF bias: {result.current_bias}")
+
+    if recent_choch_bear or recent_bos_bear:
+        sell_score += 25
+        sell_reasons.append("Bearish CHOCH / BOS detected")
+
+    if recent_buy_sweep:
+        sell_score += 20
+        sell_reasons.append("Buy-side liquidity swept")
+
+    if in_premium:
+        sell_score += 15
+        sell_reasons.append(f"Price in Premium zone (EQ: {result.equilibrium:.2f})")
+
+    if active_bear_fvg:
+        sell_score += 15
+        sell_reasons.append(f"Bearish FVG at {active_bear_fvg[0].bottom:.2f}–{active_bear_fvg[0].top:.2f}")
+
+    if active_bear_ob:
+        sell_score += 10
+        sell_reasons.append(f"Bearish OB at {active_bear_ob[0].bottom:.2f}–{active_bear_ob[0].top:.2f}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  DECISION
+    # ─────────────────────────────────────────────────────────────────────────
+    MIN_CONFIDENCE = 55   # minimum score to issue a signal
+
+    if buy_score >= sell_score and buy_score >= MIN_CONFIDENCE:
+        entry       = current_close
+        stop_loss   = entry - atr * atr_multiplier_sl
+        take_profit = entry + (entry - stop_loss) * risk_reward_target
+        rr          = round((take_profit - entry) / (entry - stop_loss), 2)
         return {
-            "risk_dollar": risk_dollar,
-            "stop_distance": None,
-            "position_units": None,
-            "lot_size": None,
-            "estimated_loss": None,
-            "estimated_profit_tp1": None,
-            "estimated_profit_tp2": None,
-            "position_value": None,
-            "required_margin": None,
-            "leverage_needed": None,
-            "leverage_status": "N/A"
+            "signal":      "BUY",
+            "entry":       round(entry,       4),
+            "stop_loss":   round(stop_loss,   4),
+            "take_profit": round(take_profit, 4),
+            "risk_reward": rr,
+            "confidence":  min(buy_score, 100),
+            "reason":      " | ".join(buy_reasons),
         }
 
-    stop_distance = abs(entry - stop_loss)
-    if stop_distance <= 0:
-        stop_distance = 0.00001
+    elif sell_score > buy_score and sell_score >= MIN_CONFIDENCE:
+        entry       = current_close
+        stop_loss   = entry + atr * atr_multiplier_sl
+        take_profit = entry - (stop_loss - entry) * risk_reward_target
+        rr          = round((entry - take_profit) / (stop_loss - entry), 2)
+        return {
+            "signal":      "SELL",
+            "entry":       round(entry,       4),
+            "stop_loss":   round(stop_loss,   4),
+            "take_profit": round(take_profit, 4),
+            "risk_reward": rr,
+            "confidence":  min(sell_score, 100),
+            "reason":      " | ".join(sell_reasons),
+        }
 
-    position_units = risk_dollar / stop_distance
-
-    if market_type in ["forex", "forex_jpy"]:
-        lot_size = position_units / 100000
-    elif market_type == "gold":
-        lot_size = position_units / 100
     else:
-        lot_size = position_units
+        best = max(buy_score, sell_score)
+        return _no_trade(
+            f"Insufficient confluence (Buy: {buy_score}, Sell: {sell_score}). "
+            f"Need ≥ {MIN_CONFIDENCE}. Best factors: "
+            + (" | ".join(buy_reasons) if buy_score > sell_score else " | ".join(sell_reasons))
+        )
 
-    estimated_loss = risk_dollar
-    estimated_profit_tp1 = abs(tp1 - entry) * position_units
-    estimated_profit_tp2 = abs(tp2 - entry) * position_units if tp2 is not None else None
 
-    position_value = position_units * entry
-    required_margin = position_value / max_leverage
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HELPER UTILITIES
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    leverage_needed = position_value / account_balance if account_balance > 0 else None
-
-    if leverage_needed is not None and leverage_needed <= max_leverage:
-        leverage_status = "OK"
-    else:
-        leverage_status = "Too High"
-
+def _no_trade(reason: str) -> dict:
     return {
-        "risk_dollar": risk_dollar,
-        "stop_distance": stop_distance,
-        "position_units": position_units,
-        "lot_size": lot_size,
-        "estimated_loss": estimated_loss,
-        "estimated_profit_tp1": estimated_profit_tp1,
-        "estimated_profit_tp2": estimated_profit_tp2,
-        "position_value": position_value,
-        "required_margin": required_margin,
-        "leverage_needed": leverage_needed,
-        "leverage_status": leverage_status
+        "signal":      "NO TRADE",
+        "entry":       0.0,
+        "stop_loss":   0.0,
+        "take_profit": 0.0,
+        "risk_reward": 0.0,
+        "confidence":  0,
+        "reason":      reason,
     }
 
 
-def signal_class(signal):
-    if signal == "BUY":
-        return "green"
-    if signal == "SELL":
-        return "red"
-    return "yellow"
-
-
-def render_top_card(label, value, small_text=""):
-    st.markdown(f"""
-    <div class="top-summary-card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value">{value}</div>
-        <div class="metric-small">{small_text}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_chart(data, actual_symbol, selected_market, timeframe, latest, signal, entry, stop_loss, tp1, resistance, support, confidence, total_score):
-    st.markdown(f"""
-    <div class="tv-wrapper">
-        <div class="tv-topbar">
-            <div class="tv-symbol">{actual_symbol}</div>
-            <div class="tv-price">O {safe_number(latest["Open"])} &nbsp; H {safe_number(latest["High"])} &nbsp; L {safe_number(latest["Low"])} &nbsp; C {safe_number(latest["Close"])}</div>
-            <div class="{signal_class(signal)}">{signal}</div>
-            <div class="tv-pill">5m</div>
-            <div class="tv-pill">15m</div>
-            <div class="tv-pill">30m</div>
-            <div class="tv-pill-active">{timeframe}</div>
-            <div class="tv-pill">Indicators</div>
-            <div class="tv-pill">Alert</div>
-            <div style="margin-left:auto;" class="tv-pill">Pro Trade Analyzer</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    left_tools, chart_col, right_panel = st.columns([0.45, 8.7, 1.55], gap="small")
-
-    with left_tools:
-        st.markdown("""
-        <div class="tv-left-tools">
-            <div class="tv-tool">＋</div>
-            <div class="tv-tool">⌖</div>
-            <div class="tv-tool">╱</div>
-            <div class="tv-tool">━</div>
-            <div class="tv-tool">▭</div>
-            <div class="tv-tool">✎</div>
-            <div class="tv-tool">T</div>
-            <div class="tv-tool">⌁</div>
-            <div class="tv-tool">📏</div>
-            <div class="tv-tool">🔍</div>
-            <div class="tv-tool">⚙</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with chart_col:
-        fig = go.Figure()
-
-        fig.add_trace(go.Candlestick(
-            x=data.index,
-            open=data["Open"],
-            high=data["High"],
-            low=data["Low"],
-            close=data["Close"],
-            name="Candles",
-            increasing_line_color="#22c55e",
-            decreasing_line_color="#ef4444",
-            increasing_fillcolor="#22c55e",
-            decreasing_fillcolor="#ef4444"
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=data["EMA_20"],
-            mode="lines",
-            name="EMA 20",
-            line=dict(color="#38bdf8", width=1.2)
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=data["EMA_50"],
-            mode="lines",
-            name="EMA 50",
-            line=dict(color="#facc15", width=1.2)
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=data["EMA_200"],
-            mode="lines",
-            name="EMA 200",
-            line=dict(color="#a855f7", width=1.8)
-        ))
-
-        fig.add_hline(
-            y=resistance,
-            line_dash="dot",
-            line_color="#ef4444",
-            annotation_text="Resistance",
-            annotation_position="top right"
-        )
-
-        fig.add_hline(
-            y=support,
-            line_dash="dot",
-            line_color="#22c55e",
-            annotation_text="Support",
-            annotation_position="bottom right"
-        )
-
-        if signal == "BUY" and stop_loss is not None and tp1 is not None:
-            fig.add_hrect(
-                y0=entry,
-                y1=tp1,
-                fillcolor="rgba(34,197,94,0.12)",
-                line_width=0,
-                annotation_text="Profit Zone",
-                annotation_position="top left"
-            )
-            fig.add_hrect(
-                y0=stop_loss,
-                y1=entry,
-                fillcolor="rgba(239,68,68,0.12)",
-                line_width=0,
-                annotation_text="Risk Zone",
-                annotation_position="bottom left"
-            )
-        elif signal == "SELL" and stop_loss is not None and tp1 is not None:
-            fig.add_hrect(
-                y0=tp1,
-                y1=entry,
-                fillcolor="rgba(34,197,94,0.12)",
-                line_width=0,
-                annotation_text="Profit Zone",
-                annotation_position="bottom left"
-            )
-            fig.add_hrect(
-                y0=entry,
-                y1=stop_loss,
-                fillcolor="rgba(239,68,68,0.12)",
-                line_width=0,
-                annotation_text="Risk Zone",
-                annotation_position="top left"
-            )
-
-        fig.update_layout(
-            template="plotly_dark",
-            height=720,
-            paper_bgcolor="#05070d",
-            plot_bgcolor="#05070d",
-            margin=dict(l=0, r=5, t=10, b=0),
-            xaxis_rangeslider_visible=False,
-            hovermode="x unified",
-            dragmode="pan",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.01,
-                xanchor="right",
-                x=1,
-                bgcolor="rgba(0,0,0,0)"
-            ),
-            xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.06)", zeroline=False),
-            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)", zeroline=False, side="right")
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={
-                "displayModeBar": True,
-                "scrollZoom": True,
-                "modeBarButtonsToAdd": ["drawline", "drawopenpath", "drawrect", "eraseshape"]
-            }
-        )
-
-    with right_panel:
-        st.markdown(f"""
-        <div class="right-panel">
-            <div class="panel-title">Watchlist</div>
-
-            <div class="watch-card">
-                <div class="watch-label">{selected_market}</div>
-                <div class="watch-value">{safe_number(latest["Close"])}</div>
-                <div class="{signal_class(signal)}">{signal}</div>
-            </div>
-
-            <div class="panel-title">Trade Levels</div>
-
-            <div class="watch-card">
-                <div class="watch-label">Entry</div>
-                <div class="watch-value">{safe_number(entry)}</div>
-            </div>
-
-            <div class="watch-card">
-                <div class="watch-label">Stop Loss</div>
-                <div class="watch-value red">{safe_number(stop_loss)}</div>
-            </div>
-
-            <div class="watch-card">
-                <div class="watch-label">Take Profit 1</div>
-                <div class="watch-value green">{safe_number(tp1)}</div>
-            </div>
-
-            <div class="watch-card">
-                <div class="watch-label">Resistance</div>
-                <div class="watch-value red">{safe_number(resistance)}</div>
-            </div>
-
-            <div class="watch-card">
-                <div class="watch-label">Support</div>
-                <div class="watch-value green">{safe_number(support)}</div>
-            </div>
-
-            <div class="panel-title">Score</div>
-
-            <div class="watch-card">
-                <div class="watch-label">Confidence</div>
-                <div class="watch-value">{safe_number(confidence, 0)}%</div>
-            </div>
-
-            <div class="watch-card">
-                <div class="watch-label">Total Score</div>
-                <div class="watch-value">{safe_number(total_score, 0)}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="bottom-bar">
-        <div>{selected_market} • {timeframe} • EMA + RSI + MACD + ATR + News + Risk Engine</div>
-        <div>Last analyzed: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ============================================================
-# MAIN APP
-# ============================================================
-if analyze:
-    try:
-        with st.spinner("Loading market data, calculating methodology, scanning news, and calculating risk..."):
-            actual_symbol, data = download_market_data(
-                TARGETS[selected_market]["symbols"],
-                period,
-                timeframe
-            )
-
-            data = add_indicators(data)
-
-            news_items = fetch_news(selected_market)
-            raw_news_score, analyzed_news = analyze_news_sentiment(news_items, selected_market)
-
-            tech_score, tech_reasons, resistance, support = technical_engine(data)
-
-            custom_method_score, method_notes = methodology_score(methodology_text)
-
-            signal, confidence, total_score, news_score, method_score = final_decision(
-                tech_score,
-                raw_news_score,
-                custom_method_score
-            )
-
-            entry, stop_loss, tp1, tp2 = calculate_trade_levels(data, signal)
-
-            market_type = TARGETS[selected_market]["type"]
-
-            position_info = calculate_position_sizing(
-                market_type=market_type,
-                entry=entry,
-                stop_loss=stop_loss,
-                tp1=tp1,
-                tp2=tp2,
-                account_balance=account_balance,
-                risk_percent=risk_percent,
-                max_leverage=max_leverage
-            )
-
-            latest = data.iloc[-1]
-
-        inject_animated_background(signal)
-
-        top1, top2, top3, top4, top5 = st.columns(5)
-
-        with top1:
-            render_top_card("Market", TARGETS[selected_market]["display"], f"Yahoo: {actual_symbol}")
-
-        with top2:
-            render_top_card("Price", safe_number(latest["Close"]), f"Timeframe: {timeframe}")
-
-        with top3:
-            render_top_card("Signal", signal, "BUY / SELL / WAIT")
-
-        with top4:
-            render_top_card("Confidence", f"{safe_number(confidence, 0)}%", "Rule-based score")
-
-        with top5:
-            render_top_card("Risk $", f"${position_info['risk_dollar']:,.2f}", f"{risk_percent}% of balance")
-
-        if signal == "BUY":
-            st.markdown('<div class="buy-signal">BUY SETUP DETECTED</div>', unsafe_allow_html=True)
-        elif signal == "SELL":
-            st.markdown('<div class="sell-signal">SELL SETUP DETECTED</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="wait-signal">WAIT — NO CLEAN SETUP</div>', unsafe_allow_html=True)
-
-        tab_chart, tab_plan, tab_rules, tab_news = st.tabs([
-            "📈 Trading Chart",
-            "🎯 Trade Plan",
-            "🧠 Methodology",
-            "📰 News Scan"
-        ])
-
-        with tab_chart:
-            render_chart(
-                data=data,
-                actual_symbol=actual_symbol,
-                selected_market=selected_market,
-                timeframe=timeframe,
-                latest=latest,
-                signal=signal,
-                entry=entry,
-                stop_loss=stop_loss,
-                tp1=tp1,
-                resistance=resistance,
-                support=support,
-                confidence=confidence,
-                total_score=total_score
-            )
-
-        with tab_plan:
-            c1, c2, c3, c4 = st.columns(4)
-
-            with c1:
-                render_top_card("Entry", safe_number(entry), "Current market reference")
-
-            with c2:
-                render_top_card("Stop Loss", safe_number(stop_loss), "ATR based risk")
-
-            with c3:
-                render_top_card("Take Profit 1", safe_number(tp1), "ATR x 2 target")
-
-            with c4:
-                render_top_card("Take Profit 2", safe_number(tp2), "ATR x 3 target")
-
-            st.markdown("### 💵 Money, Lot & Leverage Calculation")
-
-            m1, m2, m3, m4 = st.columns(4)
-
-            with m1:
-                render_top_card(
-                    "Risk Amount",
-                    f"${position_info['risk_dollar']:,.2f}",
-                    f"{risk_percent}% of ${account_balance:,.2f}"
-                )
-
-            with m2:
-                render_top_card(
-                    "Suggested Lot",
-                    safe_number(position_info["lot_size"], 3),
-                    "Based on SL distance"
-                )
-
-            with m3:
-                render_top_card(
-                    "Profit at TP1",
-                    "N/A" if position_info["estimated_profit_tp1"] is None else f"${position_info['estimated_profit_tp1']:,.2f}",
-                    "If TP1 hit"
-                )
-
-            with m4:
-                render_top_card(
-                    "Loss at SL",
-                    "N/A" if position_info["estimated_loss"] is None else f"${position_info['estimated_loss']:,.2f}",
-                    "If SL hit"
-                )
-
-            l1, l2, l3, l4 = st.columns(4)
-
-            with l1:
-                render_top_card(
-                    "Profit at TP2",
-                    "N/A" if position_info["estimated_profit_tp2"] is None else f"${position_info['estimated_profit_tp2']:,.2f}",
-                    "If TP2 hit"
-                )
-
-            with l2:
-                render_top_card(
-                    "Required Margin",
-                    "N/A" if position_info["required_margin"] is None else f"${position_info['required_margin']:,.2f}",
-                    f"Using 1:{max_leverage}"
-                )
-
-            with l3:
-                render_top_card(
-                    "Leverage Needed",
-                    "N/A" if position_info["leverage_needed"] is None else f"1:{position_info['leverage_needed']:.1f}",
-                    "Based on balance"
-                )
-
-            with l4:
-                render_top_card(
-                    "Leverage Status",
-                    position_info["leverage_status"],
-                    "OK / Too High"
-                )
-
-            st.markdown(f"""
-            <div class="method-card">
-                <h3>Risk Management Rule</h3>
-                <p>Account Balance: <b>${account_balance:,.2f}</b></p>
-                <p>Risk Per Trade: <b>{risk_percent}%</b> = <b>${position_info['risk_dollar']:,.2f}</b></p>
-                <p>Broker Leverage Selected: <b>1:{max_leverage}</b></p>
-                <p>Suggested lot size is calculated using stop loss distance and dollar risk.</p>
-                <p>Profit and loss are estimates only. They are not guaranteed.</p>
-                <p>If leverage status shows <b>Too High</b>, reduce risk %, reduce lot size, or increase account balance.</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with tab_rules:
-            r1, r2, r3, r4, r5 = st.columns(5)
-
-            with r1:
-                render_top_card("Technical Score", safe_number(tech_score, 0), "EMA + RSI + MACD + BB")
-
-            with r2:
-                render_top_card("News Score", safe_number(news_score, 0), "Capped news effect")
-
-            with r3:
-                render_top_card("Method Score", safe_number(method_score, 0), "From methodology feed")
-
-            with r4:
-                render_top_card("RSI", safe_number(latest["RSI"], 2), "Momentum")
-
-            with r5:
-                render_top_card("ATR", safe_number(latest["ATR"]), "Volatility")
-
-            st.markdown("### Technical Rule Results")
-            for reason in tech_reasons:
-                st.markdown(f'<div class="reason-card">⚡ {reason}</div>', unsafe_allow_html=True)
-
-            st.markdown("### Methodology Feed Notes")
-            if method_notes:
-                for note in method_notes:
-                    st.markdown(f'<div class="reason-card">📌 {note}</div>', unsafe_allow_html=True)
-            else:
-                st.info("No methodology keywords detected.")
-
-            st.markdown("### Indicator Values")
-
-            indicator_df = pd.DataFrame({
-                "Indicator": [
-                    "EMA 20", "EMA 50", "EMA 200", "RSI", "MACD",
-                    "MACD Signal", "MACD Histogram", "Bollinger High",
-                    "Bollinger Mid", "Bollinger Low", "ATR"
-                ],
-                "Value": [
-                    latest["EMA_20"], latest["EMA_50"], latest["EMA_200"],
-                    latest["RSI"], latest["MACD"], latest["MACD_SIGNAL"],
-                    latest["MACD_HIST"], latest["BB_HIGH"], latest["BB_MID"],
-                    latest["BB_LOW"], latest["ATR"]
-                ]
-            })
-
-            st.dataframe(indicator_df, use_container_width=True)
-
-        with tab_news:
-            st.markdown("### Live News Sentiment Scan")
-            st.write(f"Raw news score: **{raw_news_score}**")
-            st.write(f"Capped news score used in final decision: **{news_score}**")
-
-            if not analyzed_news:
-                st.info("News feed unavailable or empty.")
-            else:
-                positive_count = sum(1 for n in analyzed_news if n["sentiment"] == "positive")
-                negative_count = sum(1 for n in analyzed_news if n["sentiment"] == "negative")
-                neutral_count = sum(1 for n in analyzed_news if n["sentiment"] == "neutral")
-
-                n1, n2, n3 = st.columns(3)
-
-                with n1:
-                    render_top_card("Positive News", positive_count, "Bullish headlines")
-
-                with n2:
-                    render_top_card("Negative News", negative_count, "Bearish headlines")
-
-                with n3:
-                    render_top_card("Neutral News", neutral_count, "No strong keyword")
-
-                with st.expander("View all scanned news"):
-                    for news in analyzed_news:
-                        css_class = "news-neutral"
-                        icon = "⚪"
-
-                        if news["sentiment"] == "positive":
-                            css_class = "news-positive"
-                            icon = "🟢"
-                        elif news["sentiment"] == "negative":
-                            css_class = "news-negative"
-                            icon = "🔴"
-
-                        st.markdown(f"""
-                        <div class="{css_class}">
-                            <b>{icon} {news["title"]}</b><br>
-                            <small>{news["published"]}</small><br>
-                            <small>Sentiment score: {news["score"]}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-    except Exception as e:
-        inject_animated_background("WAIT")
-        st.error("Error occurred.")
-        st.write(e)
-
-else:
-    inject_animated_background("WAIT")
-
-    st.markdown("""
-    <div class="method-card">
-        <h2>🚀 Ready to Analyze</h2>
-        <p>Left side settings la market select pannunga.</p>
-        <p>Markets: <b>Crypto</b>, <b>Forex</b>, and <b>XAUUSD / GOLD</b>.</p>
-        <p>Account balance, risk %, leverage, methodology feed set pannitu <b>Analyze Now</b> click pannunga.</p>
-    </div>
-    """, unsafe_allow_html=True)
+def _calc_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Average True Range — used for dynamic SL sizing."""
+    high  = df["high"]
+    low   = df["low"]
+    close = df["close"].shift(1)
+    tr    = pd.concat([high - low, (high - close).abs(), (low - close).abs()], axis=1).max(axis=1)
+    atr   = tr.rolling(period).mean().iloc[-1]
+    return float(atr) if not np.isnan(atr) else float(high.iloc[-1] - low.iloc[-1])
+
+
+def print_signal(signal: dict) -> None:
+    """Pretty-print the signal dictionary."""
+    bar = "═" * 55
+    print(f"\n{bar}")
+    print(f"  SMC SIGNAL  →  {signal['signal']}")
+    print(bar)
+    print(f"  Entry      : {signal['entry']}")
+    print(f"  Stop Loss  : {signal['stop_loss']}")
+    print(f"  Take Profit: {signal['take_profit']}")
+    print(f"  R:R Ratio  : 1 : {signal['risk_reward']}")
+    print(f"  Confidence : {signal['confidence']}%")
+    print(f"  Reason     : {signal['reason']}")
+    print(f"{bar}\n")
+
+
+def log_zones(result: SMCResult) -> None:
+    """Log all detected zones for audit / debugging."""
+    logger.info("─── DETECTED ZONES ───────────────────────────────")
+    logger.info(f"  Swing Highs   : {len(result.swing_highs)}")
+    logger.info(f"  Swing Lows    : {len(result.swing_lows)}")
+    logger.info(f"  BOS Bullish   : {result.bos_bullish}")
+    logger.info(f"  BOS Bearish   : {result.bos_bearish}")
+    logger.info(f"  CHOCH Bullish : {result.choch_bullish}")
+    logger.info(f"  CHOCH Bearish : {result.choch_bearish}")
+    logger.info(f"  Liq. Sweeps   : {[(s.index, s.kind) for s in result.liquidity_sweeps]}")
+
+    active_fvgs = [f for f in result.fvg_zones if not f.filled]
+    logger.info(f"  Active FVGs   : {len(active_fvgs)}")
+    for f in active_fvgs:
+        logger.info(f"    [{f.direction.upper():7}] idx={f.index} {f.bottom:.2f} – {f.top:.2f}")
+
+    active_obs = [o for o in result.order_blocks if not o.mitigated]
+    logger.info(f"  Active OBs    : {len(active_obs)}")
+    for o in active_obs:
+        logger.info(f"    [{o.direction.upper():7}] idx={o.index} {o.bottom:.2f} – {o.top:.2f}")
+
+    logger.info(f"  Equilibrium   : {result.equilibrium:.2f}")
+    logger.info(f"  Premium Zone  : {result.premium_zone[0]:.2f} – {result.premium_zone[1]:.2f}")
+    logger.info(f"  Discount Zone : {result.discount_zone[0]:.2f} – {result.discount_zone[1]:.2f}")
+    logger.info(f"  HTF Bias      : {result.current_bias}")
+    logger.info("──────────────────────────────────────────────────")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC API  (main entry point)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def analyze(
+    df: pd.DataFrame,
+    htf_df: Optional[pd.DataFrame] = None,
+    swing_lookback: int = 5,
+    atr_multiplier_sl: float = 1.5,
+    risk_reward_target: float = 3.0,
+    verbose: bool = True,
+) -> dict:
+    """
+    One-call entry point: run full SMC analysis and return signal.
+
+    Args:
+        df                 : Primary (lower-TF) OHLC DataFrame
+        htf_df             : Higher-TF DataFrame for bias (optional)
+        swing_lookback     : Lookback for swing detection (5–10 recommended)
+        atr_multiplier_sl  : SL distance in ATR multiples
+        risk_reward_target : Minimum R:R ratio for TP
+        verbose            : Log detected zones
+
+    Returns:
+        Signal dictionary
+    """
+    _validate_df(df)
+    result = run_smc_analysis(df, htf_df, swing_lookback)
+
+    if verbose:
+        log_zones(result)
+
+    signal = generate_signal(
+        df, result,
+        atr_multiplier_sl=atr_multiplier_sl,
+        risk_reward_target=risk_reward_target,
+    )
+    return signal
+
+
+def _validate_df(df: pd.DataFrame) -> None:
+    required = {"open", "high", "low", "close"}
+    missing  = required - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame missing columns: {missing}")
+    if df.isnull().any().any():
+        logger.warning("DataFrame contains NaN values — forward-filling")
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SAMPLE TEST USAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _generate_sample_xauusd(n: int = 200, seed: int = 42) -> pd.DataFrame:
+    """
+    Generate synthetic XAUUSD-like OHLC data for testing.
+    Starts near 2300, includes a downtrend → reversal → uptrend pattern.
+    """
+    np.random.seed(seed)
+    close = [2300.0]
+
+    # Phase 1: downtrend (first 60 bars)
+    for _ in range(60):
+        close.append(close[-1] + np.random.normal(-1.5, 3.0))
+
+    # Phase 2: liquidity sweep low + reversal (bars 60–80)
+    for _ in range(20):
+        close.append(close[-1] + np.random.normal(-0.5, 4.0))
+    # Sweep
+    close.append(close[-1] - 15)
+    close.append(close[-1] + 20)   # rejection / reversal candle
+
+    # Phase 3: uptrend (remaining bars)
+    for _ in range(n - len(close)):
+        close.append(close[-1] + np.random.normal(1.2, 2.5))
+
+    close = np.array(close[:n])
+
+    rows = []
+    for c in close:
+        o = c + np.random.uniform(-2, 2)
+        h = max(o, c) + np.random.uniform(0.5, 4)
+        l = min(o, c) - np.random.uniform(0.5, 4)
+        rows.append({"open": o, "high": h, "low": l, "close": c})
+
+    return pd.DataFrame(rows)
+
+
+if __name__ == "__main__":
+    print("\n" + "█" * 60)
+    print("  SMC ENGINE — XAUUSD  |  Production Test Run")
+    print("█" * 60)
+
+    # ── Primary TF (e.g., M15) ───────────────────────────────────────────────
+    ltf_df = _generate_sample_xauusd(n=200)
+
+    # ── Higher TF (e.g., H1) ─────────────────────────────────────────────────
+    # In production: pass real H1 data; here we downsample
+    htf_df = _generate_sample_xauusd(n=60, seed=99)
+
+    # ── Run Analysis ──────────────────────────────────────────────────────────
+    signal = analyze(
+        df=ltf_df,
+        htf_df=htf_df,
+        swing_lookback=5,
+        atr_multiplier_sl=1.5,
+        risk_reward_target=3.0,
+        verbose=True,
+    )
+
+    print_signal(signal)
+
+    # ── Minimal example (no HTF bias) ─────────────────────────────────────────
+    print("─── Quick Run (no HTF) ───────────────────────────────")
+    quick_signal = analyze(ltf_df, verbose=False)
+    print(f"  Signal: {quick_signal['signal']}  |  Confidence: {quick_signal['confidence']}%")
+    print(f"  Reason: {quick_signal['reason']}\n")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DEMO: FORCE-INJECT CONFLUENCE TO SHOW ALL SIGNAL PATHS
+#  (For testing / documentation only — not for live use)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _demo_all_signal_paths():
+    """
+    Directly injects SMCResult state to demonstrate all three signal outputs.
+    In live usage, confluence emerges naturally from real market data.
+    """
+    from dataclasses import replace
+    df = _generate_sample_xauusd(n=120, seed=11)
+    result = run_smc_analysis(df, htf_df=None, swing_lookback=5)
+    last  = len(df) - 1
+    close = df["close"].iloc[-1]
+    eq    = result.equilibrium
+
+    # ── DEMO 1: BUY signal (inject bullish confluence) ────────────────────────
+    result.current_bias  = "BULLISH"
+    result.choch_bullish = [last - 3]
+    result.liquidity_sweeps = [LiquiditySweep(last - 4, close - 10, "sell_side")]
+    result.discount_zone = (close - 50, close + 5)   # price inside discount
+    result.equilibrium   = close + 10                  # eq above price → discount
+    result.fvg_zones     = [FVGZone(last - 2, close + 2, close - 2, "bullish")]
+    result.order_blocks  = [OrderBlock(last - 5, close + 1, close - 3, "bullish")]
+
+    sig_buy = generate_signal(df, result)
+    print("\n─── DEMO: BUY Signal Path ───")
+    print_signal(sig_buy)
+
+    # ── DEMO 2: SELL signal ────────────────────────────────────────────────────
+    result2 = run_smc_analysis(df)
+    result2.current_bias  = "BEARISH"
+    result2.choch_bearish = [last - 3]
+    result2.bos_bearish   = [last - 5]
+    result2.liquidity_sweeps = [LiquiditySweep(last - 4, close + 10, "buy_side")]
+    result2.premium_zone  = (close - 5, close + 50)
+    result2.equilibrium   = close - 10                # eq below price → premium
+    result2.fvg_zones     = [FVGZone(last - 2, close + 3, close - 1, "bearish")]
+    result2.order_blocks  = [OrderBlock(last - 5, close + 4, close - 1, "bearish")]
+
+    sig_sell = generate_signal(df, result2)
+    print("─── DEMO: SELL Signal Path ───")
+    print_signal(sig_sell)
+
+    # ── DEMO 3: NO TRADE (weak confluence) ────────────────────────────────────
+    result3 = run_smc_analysis(df)
+    sig_nt = generate_signal(df, result3)
+    print("─── DEMO: NO TRADE (natural sparse data) ───")
+    print_signal(sig_nt)
+
+
+if __name__ == "__main__":
+    pass  # Main block already ran above; call demo separately if needed
+    # _demo_all_signal_paths()  # Uncomment to see all three signal paths
